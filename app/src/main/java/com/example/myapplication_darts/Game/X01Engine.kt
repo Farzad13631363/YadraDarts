@@ -30,20 +30,28 @@ data class Dart(
     val isTreble: Boolean
         get() = multiplier == 3
 
+    val isSingle: Boolean
+        get() = multiplier == 1
+
+    val isBull: Boolean
+        get() = number == 25 && multiplier == 2
+
     val isMiss: Boolean
         get() = number == 0 && multiplier == 0
 
+    override fun toString(): String {
+        return when {
+            isMiss -> "MISS"
+            isBull -> "BULL"
+            multiplier == 3 -> "T$number"
+            multiplier == 2 -> "D$number"
+            else -> number.toString()
+        }
+    }
+
     companion object {
-
-        val MISS = Dart(
-            number = 0,
-            multiplier = 0
-        )
-
-        val BULL = Dart(
-            number = 25,
-            multiplier = 2
-        )
+        val MISS = Dart(0, 0)
+        val BULL = Dart(25, 2)
     }
 }
 
@@ -57,7 +65,7 @@ data class VisitResult(
 )
 
 class X01Engine(
-    startingScore: Int,
+    private val startingScore: Int,
     private val inMode: InMode,
     private val outMode: OutMode
 ) {
@@ -67,19 +75,16 @@ class X01Engine(
 
     private var enteredGame = false
 
-    private val history =
-        mutableListOf<VisitResult>()
+    private val history = mutableListOf<VisitResult>()
 
     fun submitVisit(
         darts: List<Dart>
     ): VisitResult {
 
-        val previousScore = score
-
         if (darts.isEmpty()) {
             return VisitResult(
-                previousScore = previousScore,
-                newScore = previousScore,
+                previousScore = score,
+                newScore = score,
                 darts = emptyList(),
                 total = 0,
                 bust = false,
@@ -87,21 +92,28 @@ class X01Engine(
             )
         }
 
-        var temporaryScore = score
-        var temporaryEntered = enteredGame
+        val previousScore = score
+        val previousEnteredGame = enteredGame
 
-        for (dart in darts) {
+        var workingScore = score
+        var total = 0
+        var checkout = false
+        var bust = false
 
-            if (dart.isMiss) {
-                continue
-            }
+        val acceptedDarts = mutableListOf<Dart>()
 
-            if (!temporaryEntered) {
+        for (dart in darts.take(3)) {
+
+            if (!enteredGame) {
+
+                if (dart.isMiss) {
+                    acceptedDarts.add(dart)
+                    continue
+                }
 
                 val validEntry = when (inMode) {
 
-                    InMode.STRAIGHT ->
-                        true
+                    InMode.STRAIGHT -> true
 
                     InMode.DOUBLE ->
                         dart.isDouble
@@ -111,125 +123,73 @@ class X01Engine(
                 }
 
                 if (!validEntry) {
+                    acceptedDarts.add(dart)
                     continue
                 }
 
-                temporaryEntered = true
+                enteredGame = true
             }
 
-            temporaryScore -= dart.score
-        }
+            val dartScore = dart.score
+            val candidateScore = workingScore - dartScore
 
-        /*
-         * هنوز وارد بازی نشده‌ایم
-         */
-        if (!enteredGame && !temporaryEntered) {
+            if (candidateScore == 0) {
 
-            val result = VisitResult(
-                previousScore = previousScore,
-                newScore = previousScore,
-                darts = darts,
-                total = 0,
-                bust = false,
-                checkout = false
-            )
+                val validCheckout = when (outMode) {
 
-            history.add(result)
+                    OutMode.STRAIGHT ->
+                        true
 
-            return result
-        }
+                    OutMode.DOUBLE ->
+                        dart.isDouble
 
-        /*
-         * امتیاز 1 در Double/Master Out
-         * همیشه Bust است.
-         */
-        if (
-            temporaryScore == 1 &&
-            outMode != OutMode.STRAIGHT
-        ) {
-
-            val result = VisitResult(
-                previousScore = previousScore,
-                newScore = previousScore,
-                darts = darts,
-                total = darts.sumOf { it.score },
-                bust = true,
-                checkout = false
-            )
-
-            history.add(result)
-
-            return result
-        }
-
-        /*
-         * امتیاز منفی
-         */
-        if (temporaryScore < 0) {
-
-            val result = VisitResult(
-                previousScore = previousScore,
-                newScore = previousScore,
-                darts = darts,
-                total = darts.sumOf { it.score },
-                bust = true,
-                checkout = false
-            )
-
-            history.add(result)
-
-            return result
-        }
-
-        /*
-         * Checkout
-         */
-        if (temporaryScore == 0) {
-
-            val lastDart =
-                darts.lastOrNull {
-                    !it.isMiss
+                    OutMode.MASTER ->
+                        dart.isDouble || dart.isTreble
                 }
 
-            val validCheckout = when (outMode) {
+                acceptedDarts.add(dart)
 
-                OutMode.STRAIGHT ->
-                    true
+                if (validCheckout) {
 
-                OutMode.DOUBLE ->
-                    lastDart?.isDouble == true
+                    workingScore = 0
+                    total += dartScore
+                    checkout = true
 
-                OutMode.MASTER ->
-                    lastDart?.isDouble == true ||
-                            lastDart?.isTreble == true
+                } else {
+
+                    bust = true
+                }
+
+                break
             }
 
-            if (!validCheckout) {
+            if (
+                candidateScore < 0 ||
+                candidateScore == 1
+            ) {
 
-                val result = VisitResult(
-                    previousScore = previousScore,
-                    newScore = previousScore,
-                    darts = darts,
-                    total = darts.sumOf { it.score },
-                    bust = true,
-                    checkout = false
-                )
-
-                history.add(result)
-
-                return result
+                acceptedDarts.add(dart)
+                bust = true
+                break
             }
 
-            score = 0
-            enteredGame = true
+            workingScore = candidateScore
+            total += dartScore
+            acceptedDarts.add(dart)
+        }
+
+        if (bust) {
+
+            score = previousScore
+            enteredGame = previousEnteredGame
 
             val result = VisitResult(
                 previousScore = previousScore,
-                newScore = 0,
-                darts = darts,
-                total = darts.sumOf { it.score },
-                bust = false,
-                checkout = true
+                newScore = previousScore,
+                darts = acceptedDarts,
+                total = total,
+                bust = true,
+                checkout = false
             )
 
             history.add(result)
@@ -237,17 +197,122 @@ class X01Engine(
             return result
         }
 
-        /*
-         * Visit معمولی
-         */
-        score = temporaryScore
-        enteredGame = temporaryEntered
+        score = workingScore
 
         val result = VisitResult(
             previousScore = previousScore,
             newScore = score,
-            darts = darts,
-            total = darts.sumOf { it.score },
+            darts = acceptedDarts,
+            total = total,
+            bust = false,
+            checkout = checkout
+        )
+
+        history.add(result)
+
+        return result
+    }
+
+    fun submitManualScore(
+        total: Int
+    ): VisitResult {
+
+        if (total < 0) {
+            return VisitResult(
+                previousScore = score,
+                newScore = score,
+                darts = emptyList(),
+                total = 0,
+                bust = true,
+                checkout = false
+            )
+        }
+
+        val previousScore = score
+        val previousEnteredGame = enteredGame
+
+        if (!enteredGame) {
+
+            if (
+                inMode == InMode.DOUBLE ||
+                inMode == InMode.MASTER
+            ) {
+
+                /*
+                 * A manually entered score cannot prove
+                 * the required entry dart.
+                 *
+                 * Therefore manual score is allowed only
+                 * after the player has entered the game.
+                 */
+                return VisitResult(
+                    previousScore = score,
+                    newScore = score,
+                    darts = emptyList(),
+                    total = 0,
+                    bust = true,
+                    checkout = false
+                )
+            }
+
+            enteredGame = true
+        }
+
+        val candidate = score - total
+
+        if (
+            candidate < 0 ||
+            candidate == 1
+        ) {
+
+            enteredGame = previousEnteredGame
+
+            val result = VisitResult(
+                previousScore = previousScore,
+                newScore = previousScore,
+                darts = emptyList(),
+                total = total,
+                bust = true,
+                checkout = false
+            )
+
+            history.add(result)
+
+            return result
+        }
+
+        if (candidate == 0) {
+
+            /*
+             * Manual checkout is not accepted for
+             * Double/Master Out because the exact
+             * finishing dart is unknown.
+             *
+             * The user should use Checkout Assistant.
+             */
+            if (
+                outMode == OutMode.DOUBLE ||
+                outMode == OutMode.MASTER
+            ) {
+
+                return VisitResult(
+                    previousScore = score,
+                    newScore = score,
+                    darts = emptyList(),
+                    total = 0,
+                    bust = true,
+                    checkout = false
+                )
+            }
+        }
+
+        score = candidate
+
+        val result = VisitResult(
+            previousScore = previousScore,
+            newScore = score,
+            darts = emptyList(),
+            total = total,
             bust = false,
             checkout = false
         )
@@ -263,26 +328,22 @@ class X01Engine(
             return false
         }
 
-        history.removeAt(
-            history.lastIndex
-        )
+        history.removeAt(history.lastIndex)
 
         if (history.isEmpty()) {
 
-            /*
-             * برای Undo کامل،
-             * امتیاز اولیه را از اولین وضعیت نگه می‌داریم.
-             */
-            return false
+            score = startingScore
+            enteredGame = false
+
+            return true
         }
 
-        score =
-            history.last().newScore
+        val last = history.last()
+
+        score = last.newScore
 
         enteredGame =
-            history.any {
-                !it.bust && it.total > 0
-            }
+            score != startingScore
 
         return true
     }
@@ -291,12 +352,25 @@ class X01Engine(
         return history.toList()
     }
 
-    fun reset(
-        startingScore: Int
-    ) {
-
+    fun reset() {
         score = startingScore
         enteredGame = false
         history.clear()
+    }
+
+    fun hasEnteredGame(): Boolean {
+        return enteredGame
+    }
+
+    fun getStartingScore(): Int {
+        return startingScore
+    }
+
+    fun getInMode(): InMode {
+        return inMode
+    }
+
+    fun getOutMode(): OutMode {
+        return outMode
     }
 }
